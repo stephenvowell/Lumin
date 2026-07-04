@@ -2,7 +2,7 @@
 
 A personable voice assistant for Windows. Speak naturally, get spoken answers, and look things up on the web when needed.
 
-![Lumin desktop launcher](docs/screenshot.png)
+![Lumin desktop launcher](docs/lumin.png)
 
 Lumin uses **Groq** for speech-to-text and chat, **Edge TTS** for voice output, and **DuckDuckGo** for live web search — no extra search API key required.
 

@@ -11,7 +11,7 @@ from PIL import Image, ImageGrab
 from lumin_launcher import LuminLauncher
 from lumin_theme import BG
 
-OUTPUT = ROOT / "docs" / "screenshot.png"
+OUTPUT = ROOT / "docs" / "lumin.png"
 MARGIN = 56
 
 

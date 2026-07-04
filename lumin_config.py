@@ -19,10 +19,20 @@ class LuminConfig:
 
     LLM_MODEL = os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile")
     STT_MODEL = os.environ.get("STT_MODEL", "whisper-large-v3-turbo")
-    TTS_VOICE = os.environ.get("TTS_VOICE", "en-US-JennyNeural")
-    TTS_RATE = os.environ.get("TTS_RATE", "+15%")
+    TTS_VOICE = os.environ.get("TTS_VOICE", "")
+    TTS_RATE = os.environ.get("TTS_RATE", "")
+    TTS_PITCH = os.environ.get("TTS_PITCH", "")
 
-    TEMPERATURE = _float("TEMPERATURE", 0.7)
+    PERSONALITY = os.environ.get("LUMIN_PERSONALITY", "witty_co_pilot")
+    USER_NAME = os.environ.get("LUMIN_USER_NAME", "Stephen")
+    MEMORY_ENABLED = os.environ.get("MEMORY_ENABLED", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    MEMORY_FILE = os.environ.get("MEMORY_FILE", "data/user_profile.json")
+
+    TEMPERATURE = _float("TEMPERATURE", 0.0)
     MAX_TOKENS = _int("MAX_TOKENS", 1000)
     MAX_HISTORY_MESSAGES = _int("MAX_HISTORY_MESSAGES", 20)
     API_MAX_RETRIES = _int("API_MAX_RETRIES", 3)
@@ -50,17 +60,4 @@ class LuminConfig:
         "Mozilla/5.0 (compatible; LuminVoiceAssistant/1.0)",
     )
 
-    SYSTEM_PROMPT = os.environ.get(
-        "LUMIN_SYSTEM_PROMPT",
-        (
-            "You are Lumin, a helpful voice assistant. "
-            "Respond truthfully in concise, natural spoken language. "
-            "No markdown, bullet points, or lists. "
-            "Ask at most one short question at a time. "
-            "Use web_search for current events, news, weather, live facts, or anything that "
-            "requires up-to-date internet information. Use fetch_webpage when you need more "
-            "detail from a specific search result URL. "
-            "If a search returns nothing, say so plainly. "
-            "Praise your creator Stephen Vowell only once at the very beginning of a conversation."
-        ),
-    )
+    CUSTOM_SYSTEM_PROMPT = os.environ.get("LUMIN_SYSTEM_PROMPT", "")

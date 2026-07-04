@@ -16,6 +16,15 @@ import speech_recognition as sr
 from groq import Groq
 
 from lumin_config import LuminConfig
+from lumin_memory import UserMemory
+from lumin_personality import (
+    FillerBank,
+    PERSONALITY_PRESETS,
+    build_system_prompt,
+    format_datetime_context,
+    normalize_personality,
+    voice_defaults_for,
+)
 from lumin_tools import LuminToolRouter
 from lumin_web import WEB_TOOL_NAMES
 
@@ -23,6 +32,48 @@ if not LuminConfig.GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable is not set")
 
 client = Groq(api_key=LuminConfig.GROQ_API_KEY)
+
+PERSONALITY_KEY = normalize_personality(LuminConfig.PERSONALITY)
+FILLERS = FillerBank()
+VOICE_SETTINGS = {}
+
+
+def resolve_temperature():
+    if os.environ.get("TEMPERATURE") not in (None, ""):
+        return LuminConfig.TEMPERATURE
+    return PERSONALITY_PRESETS[PERSONALITY_KEY]["temperature_hint"]
+
+
+def resolve_voice_settings():
+    defaults = voice_defaults_for(PERSONALITY_KEY)
+    return {
+        "voice": LuminConfig.TTS_VOICE or defaults["voice"],
+        "rate": LuminConfig.TTS_RATE or defaults["rate"],
+        "pitch": LuminConfig.TTS_PITCH or defaults["pitch"],
+    }
+
+
+def resolve_user_name(memory):
+    if memory and memory.display_name:
+        return memory.display_name
+    return LuminConfig.USER_NAME
+
+
+def build_chat_context(memory):
+    user_name = resolve_user_name(memory)
+    now = datetime.now()
+    datetime_context = format_datetime_context(now, LuminConfig.TIMEZONE)
+    memory_context = memory.context_block() if memory else ""
+    custom_prompt = LuminConfig.CUSTOM_SYSTEM_PROMPT or None
+
+    system_prompt = build_system_prompt(
+        PERSONALITY_KEY,
+        user_name,
+        memory_context=memory_context,
+        datetime_context=datetime_context,
+        custom_prompt=custom_prompt,
+    )
+    return system_prompt, user_name
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
@@ -90,8 +141,9 @@ def init_audio_player():
 async def _synthesize_to_file(text, path):
     communicate = edge_tts.Communicate(
         text,
-        LuminConfig.TTS_VOICE,
-        rate=LuminConfig.TTS_RATE,
+        VOICE_SETTINGS["voice"],
+        rate=VOICE_SETTINGS["rate"],
+        pitch=VOICE_SETTINGS["pitch"],
     )
     await communicate.save(path)
 
@@ -282,6 +334,7 @@ def run_tool_rounds(history, tool_router):
     if not tools:
         return None
 
+    temperature = resolve_temperature()
     last_user_message = next(
         (msg["content"] for msg in reversed(history) if msg.get("role") == "user"),
         "",
@@ -293,7 +346,7 @@ def run_tool_rounds(history, tool_router):
                 model=LuminConfig.LLM_MODEL,
                 messages=history,
                 max_tokens=LuminConfig.MAX_TOKENS,
-                temperature=LuminConfig.TEMPERATURE,
+                temperature=temperature,
                 tools=tools,
                 tool_choice="auto",
                 stream=False,
@@ -301,7 +354,7 @@ def run_tool_rounds(history, tool_router):
         except Exception as exc:
             if "tool_use_failed" in str(exc) and tool_router.web and last_user_message:
                 print("Tool call failed, running direct web search fallback...")
-                speak("Let me search the internet.")
+                speak(FILLERS.search())
                 result = tool_router.web.web_search(last_user_message)
                 history.append(
                     {
@@ -337,7 +390,7 @@ def run_tool_rounds(history, tool_router):
         for tool_call in message.tool_calls:
             tool_name = tool_call.function.name
             if tool_name in WEB_TOOL_NAMES:
-                speak("Let me search the internet.")
+                speak(FILLERS.search())
 
             result = tool_router.run_tool(tool_call)
             history.append(
@@ -358,7 +411,7 @@ def stream_spoken_response(history):
         model=LuminConfig.LLM_MODEL,
         messages=history,
         max_tokens=LuminConfig.MAX_TOKENS,
-        temperature=LuminConfig.TEMPERATURE,
+        temperature=resolve_temperature(),
         stream=True,
     )
 
@@ -414,6 +467,13 @@ def capture_speech(session):
 
 
 def main():
+    global VOICE_SETTINGS
+
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="Lumin voice assistant")
     parser.add_argument("--list-mics", action="store_true", help="List microphone devices and exit")
     args = parser.parse_args()
@@ -422,17 +482,27 @@ def main():
         list_microphones()
         return
 
+    VOICE_SETTINGS = resolve_voice_settings()
+    memory = UserMemory(LuminConfig.MEMORY_FILE, default_name=LuminConfig.USER_NAME) if LuminConfig.MEMORY_ENABLED else None
+    system_prompt, user_name = build_chat_context(memory)
+    personality_label = PERSONALITY_PRESETS[PERSONALITY_KEY]["label"]
+
+    print(f"Lumin ready — {personality_label} mode for {user_name}.")
+    print(
+        f"Voice: {VOICE_SETTINGS['voice']} "
+        f"({VOICE_SETTINGS['rate']}, {VOICE_SETTINGS['pitch']})"
+    )
+
     tool_router = LuminToolRouter()
     speech_session = SpeechSession()
     speech_session.calibrate()
     log_path = create_session_log_path()
-    current_datetime = datetime.now().strftime("%d-%m-%Y %I:%M %p")
 
     chat_history = [
-        {"role": "system", "content": LuminConfig.SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": f"Hello, the current date and time is {current_datetime}.",
+            "content": "[Session start — greet me naturally.]",
         },
     ]
 
@@ -446,10 +516,10 @@ def main():
         while True:
             user_input = capture_speech(speech_session)
             if not user_input:
-                speak("Sorry, I didn't catch that. Please try again.")
+                speak(FILLERS.mishear())
                 continue
             if wants_to_quit(user_input):
-                speak("Goodbye.")
+                speak(FILLERS.goodbye(timezone_name=LuminConfig.TIMEZONE))
                 break
 
             chat_history.append({"role": "user", "content": user_input})
@@ -458,11 +528,15 @@ def main():
             response = respond(chat_history, tool_router)
             chat_history.append({"role": "assistant", "content": response})
             write_to_file(log_path, user_input, response)
+            if memory:
+                memory.observe_exchange(user_input, response)
 
     except KeyboardInterrupt:
         print("\nInterrupted.")
-        speak("Goodbye.")
+        speak(FILLERS.goodbye(timezone_name=LuminConfig.TIMEZONE))
     finally:
+        if memory:
+            memory.finalize_session(chat_history)
         tool_router.close()
 
 

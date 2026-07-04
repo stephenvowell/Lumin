@@ -1,4 +1,8 @@
 .env
+data/
+build/
+dist/
+*.spec
 logs/
 __pycache__/
 .venv/

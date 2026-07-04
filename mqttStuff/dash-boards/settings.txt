@@ -1,4 +1,0 @@
-var ip = "m10.cloudmqtt.com"; // replace this value with your brokers IP address or domain name
-var port = "37629"; // port number for your broker's web socket listener. The dashboard will work only with websockets and
-not with tcp
-usessl = true; // if you are connecting to wss protocol set this to true, else false for ws

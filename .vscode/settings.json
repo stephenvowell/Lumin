@@ -1,4 +1,17 @@
 {
     "git.ignoreLimitWarning": true,
-    "python.missingPackage.severity": "Error"
+    "python.missingPackage.severity": "Error",
+    "vsmqtt.brokerProfiles": [
+        {
+            "name": "Raspberry_P1/1883",
+            "host": "192.168.1.19",
+            "port": 1883,
+            "clientId": "vsmqtt_client_35ca"
+        }
+    ],
+    "idf.adapterTargetName": "esp32c3",
+    "idf.openOcdConfigs": [
+        "board/esp32c3-builtin.cfg"
+    ],
+    "idf.portWin": "COM7"
 }

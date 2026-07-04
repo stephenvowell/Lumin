@@ -1,2 +1,0 @@
-; Tera Term Macro to automate login
-connect 'your_host:22 /ssh /auth=password /user=stephen /passwd=ahairgod'

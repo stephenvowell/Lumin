@@ -77,6 +77,8 @@ class LuminLauncher(tk.Tk):
         self.out_q: queue.Queue = queue.Queue()
         self.start_btn: tk.Button | None = None
         self.stop_btn: tk.Button | None = None
+        self.entry: tk.Entry | None = None
+        self.send_btn: tk.Button | None = None
 
         personality_key = normalize_personality(LuminConfig.PERSONALITY)
         self.personality_label = PERSONALITY_PRESETS[personality_key]["label"]
@@ -184,7 +186,7 @@ class LuminLauncher(tk.Tk):
 
         hint = tk.Label(
             self,
-            text="Speak after the chime. Say exit, quit, or goodbye to stop.",
+            text="Speak after the chime, or type below. Say exit, quit, or goodbye to stop.",
             bg=BG,
             fg=MUTED,
             font=(FONT, 9),
@@ -193,7 +195,7 @@ class LuminLauncher(tk.Tk):
         hint.pack(fill="x", padx=22, pady=(0, 6))
 
         console_wrap = tk.Frame(self, bg=ACCENT)
-        console_wrap.pack(fill="both", expand=True, padx=22, pady=(0, 16))
+        console_wrap.pack(fill="both", expand=True, padx=22, pady=(0, 8))
         self.console = tk.Text(
             console_wrap,
             bg=CONSOLE_BG,
@@ -215,6 +217,32 @@ class LuminLauncher(tk.Tk):
         self.console.tag_configure("sys", foreground=MUTED, font=(MONO, 9, "italic"))
         self.console.tag_configure("err", foreground=DANGER)
 
+        compose = tk.Frame(self, bg=BG)
+        compose.pack(fill="x", padx=22, pady=(0, 16))
+        self.entry = tk.Entry(
+            compose,
+            bg=CONSOLE_BG,
+            fg=TEXT,
+            insertbackground=ACCENT_L,
+            relief="flat",
+            font=(FONT, 10),
+            disabledbackground=PANEL,
+            disabledforeground=MUTED,
+        )
+        self.entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 8))
+        self.entry.bind("<Return>", lambda _e: self._send_text())
+        self.send_btn = self._btn(
+            compose,
+            "Send",
+            self._send_text,
+            base=PANEL,
+            hover=PANEL2,
+            fg=TEXT,
+            width=6,
+        )
+        self.send_btn.pack(side="right")
+        self._set_compose_enabled(False)
+
         self._log("Ready. Click Start listening to wake Lumin.\n", "sys")
         if not has_groq_key():
             self._log("Add GROQ_API_KEY to .env in the app folder before starting.\n", "err")
@@ -233,12 +261,35 @@ class LuminLauncher(tk.Tk):
         self.console.delete("1.0", "end")
         self.console.configure(state="disabled")
 
+    def _set_compose_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        if self.entry:
+            self.entry.configure(state=state)
+        if self.send_btn:
+            self.send_btn.configure(state=state)
+
+    def _send_text(self) -> None:
+        if self.proc is None or self.proc.stdin is None or not self.entry:
+            return
+        text = self.entry.get().strip()
+        if not text:
+            return
+        self.entry.delete(0, "end")
+        try:
+            self.proc.stdin.write(text + "\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            self._log(f"Could not send message: {exc}\n", "err")
+
     def _set_running(self, running: bool) -> None:
         self.status_lbl.configure(text="listening" if running else "idle", fg=ACCENT_L if running else MUTED)
         if self.start_btn:
             self.start_btn.configure(state="disabled" if running else "normal")
         if self.stop_btn:
             self.stop_btn.configure(state="normal" if running else "disabled")
+        self._set_compose_enabled(running)
+        if running and self.entry:
+            self.entry.focus_set()
 
     def _start(self) -> None:
         if self.proc is not None:
@@ -257,6 +308,7 @@ class LuminLauncher(tk.Tk):
                 worker_command(),
                 cwd=cwd,
                 env=env,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -286,6 +338,11 @@ class LuminLauncher(tk.Tk):
         if self.proc is None:
             return
         self._log("\n--- stopping ---\n", "sys")
+        if self.proc.stdin:
+            try:
+                self.proc.stdin.close()
+            except OSError:
+                pass
         self.proc.terminate()
         try:
             self.proc.wait(timeout=5)

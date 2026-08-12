@@ -119,6 +119,63 @@ def list_microphones():
     print("\nSet MIC_INDEX in .env to choose a device.")
 
 
+class _SilenceStderr:
+    """Silence C-level ALSA/PortAudio errors during device probes."""
+
+    def __enter__(self):
+        self._saved = os.dup(2)
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, 2)
+        os.close(devnull)
+        return self
+
+    def __exit__(self, *exc):
+        os.dup2(self._saved, 2)
+        os.close(self._saved)
+
+
+def microphone_available(device_index=None):
+    kwargs = {}
+    if device_index is not None:
+        kwargs["device_index"] = device_index
+    try:
+        with _SilenceStderr():
+            names = sr.Microphone.list_microphone_names()
+            if not names:
+                return False
+            with sr.Microphone(**kwargs):
+                return True
+    except Exception:
+        return False
+
+
+def resolve_input_mode(force_text=False):
+    if force_text:
+        return "text"
+    mode = (LuminConfig.INPUT_MODE or "auto").strip().lower()
+    if mode in {"text", "type", "typed", "keyboard"}:
+        return "text"
+    want_voice = mode in {"voice", "auto", ""}
+    if want_voice and microphone_available(LuminConfig.MIC_INDEX):
+        return "voice"
+    if mode == "voice":
+        print("No microphone found; falling back to typed input.")
+    else:
+        print("No microphone found; type a message instead.")
+    return "text"
+
+
+def capture_typed():
+    print("Waiting for typed message...")
+    try:
+        line = input().strip()
+    except EOFError:
+        return "quit"
+    if line:
+        print(f"You said: {line}")
+    return line
+
+
 def clean_text_for_speech(text):
     if not text:
         return ""
@@ -138,8 +195,22 @@ def split_sentences(text):
 
 
 def init_audio_player():
-    if not pygame.mixer.get_init():
+    if pygame.mixer.get_init():
+        return True
+    try:
         pygame.mixer.init()
+        return True
+    except Exception:
+        os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+        try:
+            pygame.mixer.quit()
+        except Exception:
+            pass
+        try:
+            pygame.mixer.init()
+            return True
+        except Exception:
+            return False
 
 
 async def _synthesize_to_file(text, path):
@@ -153,7 +224,8 @@ async def _synthesize_to_file(text, path):
 
 
 async def _play_mp3(path):
-    init_audio_player()
+    if not init_audio_player():
+        return
     pygame.mixer.music.load(path)
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():
@@ -480,6 +552,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Lumin voice assistant")
     parser.add_argument("--list-mics", action="store_true", help="List microphone devices and exit")
+    parser.add_argument("--text", action="store_true", help="Type messages instead of using the microphone")
     args = parser.parse_args()
 
     if args.list_mics:
@@ -490,16 +563,21 @@ def main():
     memory = UserMemory(LuminConfig.MEMORY_FILE, default_name=LuminConfig.USER_NAME) if LuminConfig.MEMORY_ENABLED else None
     system_prompt, user_name = build_chat_context(memory)
     personality_label = PERSONALITY_PRESETS[PERSONALITY_KEY]["label"]
+    input_mode = resolve_input_mode(force_text=args.text)
 
     print(f"Lumin ready — {personality_label} mode for {user_name}.")
     print(
         f"Voice: {VOICE_SETTINGS['voice']} "
         f"({VOICE_SETTINGS['rate']}, {VOICE_SETTINGS['pitch']})"
     )
+    if input_mode == "text":
+        print("Typed input ready. Type a message, or quit to stop.")
 
     tool_router = LuminToolRouter()
-    speech_session = SpeechSession()
-    speech_session.calibrate()
+    speech_session = None
+    if input_mode == "voice":
+        speech_session = SpeechSession()
+        speech_session.calibrate()
     log_path = create_session_log_path()
 
     chat_history = [
@@ -518,7 +596,10 @@ def main():
         print(f"Session log: {log_path}")
 
         while True:
-            user_input = capture_speech(speech_session)
+            if input_mode == "voice":
+                user_input = capture_speech(speech_session)
+            else:
+                user_input = capture_typed()
             if not user_input:
                 speak(FILLERS.mishear())
                 continue

@@ -43,6 +43,7 @@ class LuminConfig:
     PHRASE_TIME_LIMIT = _int("PHRASE_TIME_LIMIT", 15)
     AMBIENT_NOISE_DURATION = _float("AMBIENT_NOISE_DURATION", 0.5)
     LISTEN_CHIME = os.environ.get("LISTEN_CHIME", "true").lower() in ("1", "true", "yes")
+    INPUT_MODE = os.environ.get("INPUT_MODE", "auto").strip().lower() or "auto"
 
     TIMEZONE = os.environ.get("TIMEZONE", "America/Chicago")
     LOG_DIR = os.environ.get("LOG_DIR", "logs")

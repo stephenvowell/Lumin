@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d1528" />
+  <title>Lumin</title>
+  <style>
+    :root {
+      --bg: #0d1528;
+      --panel: #122040;
+      --accent: #3b82f6;
+      --accent-h: #2563eb;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --danger: #f87171;
+      --ok: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+      padding: 20px 18px calc(24px + env(safe-area-inset-bottom));
+    }
+    header h1 { margin: 0; font-size: 1.7rem; }
+    header p { margin: 6px 0 0; color: var(--muted); font-size: 0.95rem; }
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      margin: 18px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .bubble {
+      max-width: 92%;
+      padding: 10px 12px;
+      border-radius: 14px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+    .you { align-self: flex-end; background: var(--accent); }
+    .lumin { align-self: flex-start; background: var(--panel); }
+    .sys { align-self: center; color: var(--muted); font-size: 0.85rem; }
+    .err { align-self: center; color: var(--danger); font-size: 0.9rem; }
+    #mic {
+      width: 96px;
+      height: 96px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--accent);
+      color: white;
+      font-size: 2rem;
+      margin: 0 auto 12px;
+      cursor: pointer;
+    }
+    #mic.rec { background: var(--danger); animation: pulse 1s infinite; }
+    #mic:disabled { opacity: 0.5; }
+    @keyframes pulse {
+      50% { transform: scale(1.06); }
+    }
+    #status { text-align: center; color: var(--muted); min-height: 1.4em; }
+    form {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    input {
+      flex: 1;
+      background: #080e1c;
+      color: var(--text);
+      border: 1px solid #1a2d5c;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 16px;
+    }
+    form button {
+      background: var(--panel);
+      color: var(--text);
+      border: 0;
+      border-radius: 10px;
+      padding: 0 16px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Lumin</h1>
+    <p>Tap the mic, talk, tap again. Uses this phone’s microphone.</p>
+  </header>
+  <div id="log"></div>
+  <button id="mic" type="button" aria-label="Record">●</button>
+  <div id="status">Allow the microphone when Chrome asks.</div>
+  <form id="type">
+    <input id="text" autocomplete="off" placeholder="Or type a message" />
+    <button type="submit">Send</button>
+  </form>
+  <script>
+    const key = new URLSearchParams(location.search).get("k") || "";
+    const logEl = document.getElementById("log");
+    const mic = document.getElementById("mic");
+    const status = document.getElementById("status");
+    const form = document.getElementById("type");
+    const text = document.getElementById("text");
+
+    let recorder = null;
+    let chunks = [];
+    let recording = false;
+    let mime = "";
+
+    function add(cls, msg) {
+      const div = document.createElement("div");
+      div.className = "bubble " + cls;
+      div.textContent = msg;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function api(path, body) {
+      const res = await fetch(path + (key ? "?k=" + encodeURIComponent(key) : ""), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    async function playAudio(b64) {
+      if (!b64) return;
+      const audio = new Audio("data:audio/mpeg;base64," + b64);
+      try { await audio.play(); } catch (err) { console.warn(err); }
+    }
+
+    async function handleTurn(payload) {
+      status.textContent = "Lumin is thinking…";
+      mic.disabled = true;
+      const data = await api("/api/turn", payload);
+      if (data.user) add("you", data.user);
+      if (data.reply) add("lumin", data.reply);
+      if (data.quit) {
+        status.textContent = "Session ended.";
+        mic.disabled = true;
+        return;
+      }
+      await playAudio(data.audio);
+      status.textContent = "Tap the mic to talk.";
+      mic.disabled = false;
+    }
+
+    function pickMime() {
+      const types = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus",
+      ];
+      return types.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+    }
+
+    async function startRec() {
+      mime = pickMime();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+      chunks = [];
+      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      mime = recorder.mimeType || mime || "audio/webm";
+      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      recorder.start();
+      recording = true;
+      mic.classList.add("rec");
+      status.textContent = "Listening… tap to stop.";
+    }
+
+    async function stopRec() {
+      recording = false;
+      mic.classList.remove("rec");
+      status.textContent = "Sending…";
+      const rec = recorder;
+      const blob = await new Promise((resolve) => {
+        rec.onstop = () => resolve(new Blob(chunks, { type: mime }));
+        rec.stop();
+        rec.stream.getTracks().forEach((t) => t.stop());
+      });
+      if (blob.size < 200) {
+        add("err", "I didn’t catch any audio. Try again a bit closer to the mic.");
+        status.textContent = "Tap the mic to talk.";
+        return;
+      }
+      const buf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      bytes.forEach((b) => { binary += String.fromCharCode(b); });
+      await handleTurn({ audio: btoa(binary), mime });
+    }
+
+    mic.addEventListener("click", async () => {
+      try {
+        if (!recording) await startRec();
+        else await stopRec();
+      } catch (err) {
+        add("err", err.message || String(err));
+        status.textContent = "Microphone blocked. Allow it in the browser, or type below.";
+        mic.classList.remove("rec");
+        recording = false;
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const value = text.value.trim();
+      if (!value) return;
+      text.value = "";
+      try { await handleTurn({ text: value }); }
+      catch (err) { add("err", err.message || String(err)); }
+    });
+
+    (async () => {
+      try {
+        const data = await api("/api/start", {});
+        if (data.reply) add("lumin", data.reply);
+        await playAudio(data.audio);
+        status.textContent = "Tap the mic to talk.";
+      } catch (err) {
+        add("err", err.message || String(err));
+      }
+    })();
+  </script>
+</body>
+</html>

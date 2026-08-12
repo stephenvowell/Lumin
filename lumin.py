@@ -40,6 +40,7 @@ client = Groq(api_key=LuminConfig.GROQ_API_KEY)
 PERSONALITY_KEY = normalize_personality(LuminConfig.PERSONALITY)
 FILLERS = FillerBank()
 VOICE_SETTINGS = {}
+SPEAK_ALOUD = True
 
 
 def resolve_temperature():
@@ -256,6 +257,8 @@ def speak(text, pause_after=True):
         return
 
     print(text)
+    if not SPEAK_ALOUD:
+        return
 
     for chunk in chunk_for_speech(text):
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
@@ -354,11 +357,30 @@ def groq_chat_create(**kwargs):
 
 def transcribe_audio(audio_data):
     wav_bytes = audio_data.get_wav_data()
+    return transcribe_bytes(wav_bytes, mime="audio/wav", filename="speech.wav")
+
+
+def transcribe_bytes(data, mime="audio/webm", filename=None):
+    mime = (mime or "audio/webm").split(";")[0].strip().lower()
+    names = {
+        "audio/wav": ("speech.wav", "audio/wav"),
+        "audio/x-wav": ("speech.wav", "audio/wav"),
+        "audio/webm": ("speech.webm", "audio/webm"),
+        "audio/mp4": ("speech.mp4", "audio/mp4"),
+        "audio/m4a": ("speech.m4a", "audio/m4a"),
+        "audio/aac": ("speech.aac", "audio/aac"),
+        "audio/mpeg": ("speech.mp3", "audio/mpeg"),
+        "audio/mp3": ("speech.mp3", "audio/mpeg"),
+        "audio/ogg": ("speech.ogg", "audio/ogg"),
+        "audio/opus": ("speech.ogg", "audio/ogg"),
+    }
+    default_name, content_type = names.get(mime, ("speech.webm", "audio/webm"))
+    upload_name = filename or default_name
     for attempt in range(LuminConfig.API_MAX_RETRIES + 1):
         try:
             transcription = client.audio.transcriptions.create(
                 model=LuminConfig.STT_MODEL,
-                file=("speech.wav", wav_bytes, "audio/wav"),
+                file=(upload_name, data, content_type),
                 language="en",
             )
             return transcription.text.strip()
@@ -501,13 +523,17 @@ def stream_spoken_response(history):
         delta = chunk.choices[0].delta
         if delta.content:
             content_parts.append(delta.content)
-            buffer = "".join(content_parts)
-            spoken_index = speak_streamed_text(buffer, spoken_index)
+            if SPEAK_ALOUD:
+                buffer = "".join(content_parts)
+                spoken_index = speak_streamed_text(buffer, spoken_index)
 
     full_text = "".join(content_parts)
-    remainder = full_text[spoken_index:].strip()
-    if remainder:
-        speak(remainder)
+    if SPEAK_ALOUD:
+        remainder = full_text[spoken_index:].strip()
+        if remainder:
+            speak(remainder)
+    elif full_text:
+        print(full_text)
 
     return full_text
 

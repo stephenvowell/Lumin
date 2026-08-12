@@ -7,8 +7,12 @@ import re
 import sys
 import tempfile
 import time
-import winsound
 from datetime import datetime
+
+try:
+    import winsound
+except ImportError:  # winsound is Windows-only
+    winsound = None
 
 import edge_tts
 import pygame
@@ -219,7 +223,7 @@ class SpeechSession:
         self._calibrated = True
 
     def listen_chime(self):
-        if not LuminConfig.LISTEN_CHIME:
+        if not LuminConfig.LISTEN_CHIME or winsound is None:
             return
         try:
             winsound.Beep(880, 100)
